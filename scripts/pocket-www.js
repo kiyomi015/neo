@@ -4,7 +4,7 @@
 // node scripts/pocket-www.js
 //
 // Fills pocket/www with what NEO Pocket shares with desktop NEO: the editor
-// (app.js, covers.js, styles.css, i18n.js, fonts, locales), JSZip, and the
+// (app.js, covers.js, styles.css, i18n.js, fonts, locales, epub), JSZip, and the
 // spellchecker (Hunspell's browser build plus the same dictionaries desktop
 // NEO bundles). The robot build runs this; so does a local Android or iOS
 // build, before `npx cap sync`.
@@ -29,6 +29,8 @@ for (const f of ['app.js', 'covers.js', 'styles.css', 'i18n.js']) copy(path.join
 copy(path.join(mods, 'jszip', 'dist', 'jszip.min.js'), path.join(www, 'jszip.min.js'));
 copyDir(path.join(root, 'fonts'), path.join(www, 'fonts'));
 copyDir(path.join(root, 'locales'), path.join(www, 'locales'));
+// the EPUB's stylesheet: Blitz lite and NEO's rules, read when a book is exported
+copyDir(path.join(root, 'epub'), path.join(www, 'epub'));
 
 // Hunspell. The package finds its browser build through an import map
 // (#hunspell-glue) that a phone's web view doesn't have, so point it at the

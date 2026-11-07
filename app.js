@@ -17247,11 +17247,105 @@ async function exportCover(d) {
   return { base64: url.split(',')[1], mime: 'image/jpeg', ext: 'jpg' };
 }
 
-// what each kind of section is, in the EPUB's own words
-const EPUB_TYPES = {
-  copyright: 'copyright-page', dedication: 'dedication', epigraph: 'epigraph', part: 'part',
-  opener: 'volume', acknowledgments: 'acknowledgments', about: 'backmatter'
+// ---- EPUB semantics: what each section is, for reading apps and screen readers ----
+// One table, so the EPUB's word for a section (epub:type, from the EPUB 3
+// Structural Semantics Vocabulary) and the one a screen reader announces (a
+// DPUB-ARIA 1.1 role) can't drift apart. Where DPUB-ARIA has no role for a
+// kind (copyright, a book's own first page in a bound shelf, About the
+// Author), the section keeps its epub:type and its name. The role goes on
+// the <section>: DPUB-ARIA roles aren't allowed on <body>.
+const EPUB_SEMANTICS = {
+  chapter: { type: 'chapter', role: 'doc-chapter' },
+  unnumbered: { type: 'chapter', role: 'doc-chapter' },
+  prologue: { type: 'prologue', role: 'doc-prologue' },
+  epilogue: { type: 'epilogue', role: 'doc-epilogue' },
+  part: { type: 'part', role: 'doc-part' },
+  opener: { type: 'volume', role: '' },
+  copyright: { type: 'copyright-page', role: '' },
+  dedication: { type: 'dedication', role: 'doc-dedication' },
+  epigraph: { type: 'epigraph', role: 'doc-epigraph' },
+  acknowledgments: { type: 'acknowledgments', role: 'doc-acknowledgments' },
+  about: { type: 'backmatter', role: '' }
 };
+// Which part of the book a page is in, for its <body epub:type>: the pages
+// before the story (frontmatter), the story itself, parts, prologue and
+// epilogue included (bodymatter), and the pages after it (backmatter).
+// EPUB 3 Structural Semantics: all three are allowed on body. By kind, not by
+// where the contents page sits: a prologue placed before the contents is
+// still the story. Reading apps use them to find where the book begins.
+const EPUB_FRONT_KINDS = ['copyright', 'dedication', 'epigraph'];
+const EPUB_BACK_KINDS = ['acknowledgments', 'about'];
+function epubMatter(ch) {
+  const kind = ch.kind || 'chapter';
+  return EPUB_FRONT_KINDS.includes(kind) ? 'frontmatter' : EPUB_BACK_KINDS.includes(kind) ? 'backmatter' : 'bodymatter';
+}
+// A heading's rank from its depth in the contents (ch.level): a chapter in a
+// part, or in one book of a shelf, is an <h2>, so a screen reader's list of
+// headings nests the way the contents do. HTML has six.
+const epubHeadingRank = (level) => 'h' + Math.min(6, Math.max(0, level | 0) + 1);
+// a section's semantics: a prologue or epilogue is a chapter whose role says so
+function epubSemantics(ch) {
+  return EPUB_SEMANTICS[ch.role] || EPUB_SEMANTICS[ch.kind || 'chapter'] || EPUB_SEMANTICS.chapter;
+}
+// <section …>: what it is, and its name for a screen reader, from its heading
+// (headingId) or, with none, from `label`
+function epubSectionOpen(ch, { cls = '', headingId = '', label = '' } = {}) {
+  const sem = epubSemantics(ch);
+  const name = headingId ? ` aria-labelledby="${headingId}"` : label ? ` aria-label="${escXml(label)}"` : '';
+  return `<section epub:type="${sem.type}"${sem.role ? ` role="${sem.role}"` : ''}${cls ? ` class="${cls}"` : ''}${name}>`;
+}
+// The book's accessibility, in content.opf, for stores and reading apps
+// (schema.org's accessibility properties; "schema:" is a prefix EPUB 3
+// reserves). Only what every NEO book is: text that reflows, headings and a
+// table of contents to move by, one reading order, a cover described in
+// words, nothing that flashes. No dcterms:conformsTo: that's a claim to
+// meet EPUB Accessibility, made only once the books have been checked.
+function epubA11yMeta() {
+  const meta = [
+    ['accessMode', 'textual'], ['accessMode', 'visual'], ['accessModeSufficient', 'textual'],
+    ['accessibilityFeature', 'structuralNavigation'], ['accessibilityFeature', 'tableOfContents'],
+    ['accessibilityFeature', 'readingOrder'], ['accessibilityFeature', 'alternativeText'],
+    ['accessibilityFeature', 'displayTransformability'],
+    // the sections' DPUB-ARIA roles, and no DRM: NEO never locks a book
+    ['accessibilityFeature', 'ARIA'], ['accessibilityFeature', 'unlocked'],
+    ['accessibilityHazard', 'none'],
+    ['accessibilitySummary', t('The text reflows to any screen and type size. Headings and a table of contents lead to every part of the book. The cover image is described in words.')]
+  ];
+  return meta.map(([p, v]) => `<meta property="schema:${p}">${escXml(v)}</meta>`).join('\n');
+}
+// content.opf's title and author: the title and any subtitle, each with its
+// title-type, and the author with the role "author" (MARC relators). The
+// rights are the first line of the book's own copyright page; a book without
+// one claims none.
+function epubTitleMeta(d) {
+  const lines = [`<dc:title id="title">${escXml(d.title)}</dc:title>`, '<meta refines="#title" property="title-type">main</meta>'];
+  if (d.subtitle && String(d.subtitle).trim()) {
+    lines.push(`<dc:title id="subtitle">${escXml(String(d.subtitle).trim())}</dc:title>`, '<meta refines="#subtitle" property="title-type">subtitle</meta>');
+  }
+  lines.push(`<dc:creator id="creator">${escXml(d.author)}</dc:creator>`, '<meta refines="#creator" property="role" scheme="marc:relators">aut</meta>');
+  const page = (d.sections || []).find((s) => s.kind === 'copyright');
+  const rights = page && (page.paras || []).map((p) => String(p.text || '').trim()).find(Boolean);
+  if (rights) lines.push(`<dc:rights>${escXml(rights)}</dc:rights>`);
+  return lines.join('\n');
+}
+// The book's two stylesheets, linked from every page in this order: Blitz
+// lite (epub/blitz/, vendored and never edited) resets what reading apps
+// disagree on, then NEO's own rules (epub/neo.css), which win where the two
+// meet, set how a NEO book looks. Each goes into the book as it is.
+const EPUB_STYLESHEETS = ['blitz-lite.css', 'neo.css'];
+const EPUB_CSS_LINKS = EPUB_STYLESHEETS.map((f) => `<link rel="stylesheet" type="text/css" href="${f}"/>`).join('');
+// ---- end of EPUB semantics ----
+
+// the two files, bundled beside index.html (and copied into Pocket's www),
+// in EPUB_STYLESHEETS' order
+async function epubStyles() {
+  const read = async (p) => {
+    const r = await fetch(p);
+    if (!r.ok) throw new Error(p + ': ' + r.status);
+    return r.text();
+  };
+  return Promise.all([read('epub/blitz/blitz-lite.css'), read('epub/neo.css')]);
+}
 
 function chapterXhtml(ch, d) {
   const kind = ch.kind || 'chapter';
@@ -17263,7 +17357,7 @@ function chapterXhtml(ch, d) {
     if (r.fn !== undefined) {
       notes.push(r.fn);
       fnN += 1;
-      return `<sup class="fnref"><a epub:type="noteref" href="#fn${fnN}" id="fnr${fnN}">${fnN}</a></sup>`;
+      return `<sup class="fnref"><a epub:type="noteref" role="doc-noteref" href="#fn${fnN}" id="fnr${fnN}">${fnN}</a></sup>`;
     }
     let t = escXml(r.text);
     if (r.s) t = '<s>' + t + '</s>';
@@ -17272,31 +17366,49 @@ function chapterXhtml(ch, d) {
     if (r.b) t = '<strong>' + t + '</strong>';
     return t;
   }).join('');
+  // a scene break shows its stars; a screen reader says "separator", not "star star star"
+  const brk = `<p class="brk" role="separator" aria-label="${escXml(t('Scene break'))}">* * *</p>`;
   // a page's lines, each set on its own
-  const lines = () => ch.paras.map((p) => {
-    if (p.sceneBreak) return '<p class="brk">* * *</p>';
-    const cls = [kind !== 'copyright' && isAttribution(p) ? 'attr' : '', p.poetry ? 'poetry' : '', p.align === 'center' || p.align === 'right' ? p.align : ''].filter(Boolean);
+  // A stanza's first line, and the prose line after a stanza, carry a class
+  // that spaces them from what's around them. Classes, not CSS's sibling
+  // selectors (p + p.poetry): Kindle ignores those (see scripts/epub.test.js).
+  const verse = (p, i) => {
+    const prev = ch.paras[i - 1];
+    if (p.poetry) return !prev || !prev.poetry ? 'stanza' : '';
+    return prev && prev.poetry ? 'after-verse' : '';
+  };
+  const lines = () => ch.paras.map((p, i) => {
+    if (p.sceneBreak) return brk;
+    const cls = [kind !== 'copyright' && isAttribution(p) ? 'attr' : '', p.poetry ? 'poetry' : '', verse(p, i), p.align === 'center' || p.align === 'right' ? p.align : ''].filter(Boolean);
     return `<p${cls.length ? ` class="${cls.join(' ')}"` : ''}>${xhtmlRuns(p)}</p>`;
   }).join('\n');
   let inner;
+  // the section's heading carries its name; a page with none is named for its kind.
+  // Its rank follows its depth in the contents: a chapter in a part, or in
+  // one book of a shelf, is an <h2>, so a screen reader's heading list nests
+  const hid = 'h' + ch.num;
+  const hn = epubHeadingRank(ch.level);
+  // (a part's heading keeps a space between "Part I" and its title, so the
+  // two don't run together where a reader drops the stylesheet)
   if (kind === 'copyright' || kind === 'dedication' || kind === 'epigraph') {
-    inner = `<section epub:type="${EPUB_TYPES[kind]}" class="${kind}">
+    inner = `${epubSectionOpen(ch, { cls: kind, label: pageKindName(kind) })}
 ${lines()}
 </section>`;
   } else if (kind === 'part') {
-    inner = `<section epub:type="part" class="part"><h1><span class="pl">${escXml(ch.heading)}</span>${ch.partTitle ? `<span class="pt">${escXml(ch.partTitle)}</span>` : ''}</h1>
+    inner = `${epubSectionOpen(ch, { cls: 'part', headingId: hid })}<${hn} id="${hid}"><span class="pl">${escXml(ch.heading)}</span>${ch.partTitle ? ` <span class="pt">${escXml(ch.partTitle)}</span>` : ''}</${hn}>
 ${lines()}
 </section>`;
   } else if (kind === 'opener') {
-    inner = `<section epub:type="volume" class="opener"><h1>${escXml(ch.heading)}</h1>
-${ch.subtitle ? `<p class="sub">${escXml(ch.subtitle)}</p>` : ''}${ch.byline ? `<p class="byline">${escXml(ch.byline)}</p>` : ''}
+    inner = `${epubSectionOpen(ch, { cls: 'opener', headingId: hid })}<${hn} id="${hid}">${escXml(ch.heading)}</${hn}>
+${ch.subtitle ? `<p class="sub" epub:type="subtitle" role="doc-subtitle">${escXml(ch.subtitle)}</p>` : ''}${ch.byline ? `<p class="byline">${escXml(ch.byline)}</p>` : ''}
 </section>`;
   } else {
     let first = true;
-    const paras = ch.paras.map((p) => {
-      if (p.sceneBreak) { first = true; return '<p class="brk">* * *</p>'; }
+    const paras = ch.paras.map((p, i) => {
+      if (p.sceneBreak) { first = true; return brk; }
       const classes = [];
       if (p.poetry) classes.push('poetry');
+      if (verse(p, i)) classes.push(verse(p, i));
       else if (p.flush) classes.push('flush');
       else if (first) {
         classes.push('first');
@@ -17308,13 +17420,15 @@ ${ch.subtitle ? `<p class="sub">${escXml(ch.subtitle)}</p>` : ''}${ch.byline ? `
       if (!p.poetry) first = false;
       return `<p${cls}>${xhtmlRuns(p)}</p>`;
     }).join('\n');
-    inner = `<section epub:type="${EPUB_TYPES[kind] || ch.role || 'chapter'}">${ch.heading ? `<h1>${escXml(ch.heading)}</h1>` : ''}${ch.byline ? `<p class="byline">${escXml(ch.byline)}</p>` : ''}
+    // a story with no chapters has no heading: it's named for the book
+    const open = epubSectionOpen(ch, ch.heading ? { headingId: hid } : { label: ch.label || d.title });
+    inner = `${open}${ch.heading ? `<${hn} id="${hid}">${escXml(ch.heading)}</${hn}>` : ''}${ch.byline ? `<p class="byline">${escXml(ch.byline)}</p>` : ''}
 ${paras}
 </section>`;
   }
   if (notes.length) {
     const first = fnN - notes.length + 1;
-    const asides = notes.map((n, i) => `<aside epub:type="footnote" id="fn${first + i}" class="footnote"><p><a href="#fnr${first + i}">${first + i}</a>&#8194;${escXml(n)}</p></aside>`).join('\n');
+    const asides = notes.map((n, i) => `<aside epub:type="footnote" role="doc-footnote" id="fn${first + i}" class="footnote"><p><a role="doc-backlink" href="#fnr${first + i}">${first + i}</a>&#8194;${escXml(n)}</p></aside>`).join('\n');
     const at = inner.lastIndexOf('</section>');
     inner = inner.slice(0, at) + `<div class="notes">\n${asides}\n</div>\n` + inner.slice(at);
   }
@@ -17323,14 +17437,16 @@ ${paras}
   return `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}" lang="${lang}">
-<head><title>${escXml(ch.heading || ch.label || d.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body>${inner}</body></html>`;
+<head><title>${escXml(ch.heading || ch.label || d.title)}</title>${EPUB_CSS_LINKS}</head>
+<body epub:type="${epubMatter(ch)}">${inner}</body></html>`;
 }
 
 async function buildEpubEntries(data) {
   const d = data || bookExportData();
   const chapters = d.sections;
   const uuid = 'urn:uuid:' + (d.uuid || crypto.randomUUID());
+  // every page says its language, so a screen reader speaks it in the right voice
+  const lang = escXml(d.language || NeoI18n.getLocale());
   const modified = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
   // real cover art when the book has it; the shelf's cover otherwise
@@ -17360,6 +17476,10 @@ ${navList(n.children)}
 <navPoint id="ch${n.e.num}" playOrder="${playOrder}"><navLabel><text>${escXml(n.e.label)}</text></navLabel><content src="ch${n.e.num}.xhtml"/>${ncxPoints(n.children)}</navPoint>`;
   }).join('');
   const entryCount = (nodes) => nodes.reduce((n, x) => n + 1 + entryCount(x.children), 0);
+  // a contents page worth reading through: more than one entry. Without one
+  // the nav document stays out of the spine, and so do the landmark and the
+  // guide entry that point at it (a link must lead to a spine item, RSC-011)
+  const navInSpine = entryCount(toc) > 1;
 
   const entries = [
     { path: 'mimetype', content: 'application/epub+zip', store: true },
@@ -17368,13 +17488,13 @@ ${navList(n.children)}
 <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
 </container>` },
     { path: 'OEBPS/content.opf', content: `<?xml version="1.0" encoding="utf-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="${lang}">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:identifier id="bookid">${uuid}</dc:identifier>
-<dc:title>${escXml(d.title)}</dc:title>
-<dc:creator>${escXml(d.author)}</dc:creator>
+${epubTitleMeta(d)}
 <dc:language>${escXml(d.language || NeoI18n.getLocale())}</dc:language>
 <meta property="dcterms:modified">${modified}</meta>
+${epubA11yMeta()}
 <meta name="cover" content="cover-image"/>
 </metadata>
 <manifest>
@@ -17383,34 +17503,35 @@ ${navList(n.children)}
 <item id="titlepage" href="title.xhtml" media-type="application/xhtml+xml"/>
 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
 <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
-<item id="css" href="style.css" media-type="text/css"/>
+${EPUB_STYLESHEETS.map((f, i) => `<item id="css${i + 1}" href="${f}" media-type="text/css"/>`).join('\n')}
 ${chItems}
 </manifest>
-<spine toc="ncx">
-<itemref idref="cover" linear="no"/>
+${/* Every page in the spine is linear: readers treat linear="no" as they
+   like (EPUB 3.3 leaves it to them; some move such pages to the end, some
+   show them anyway, ADE ignored it in EPUB 2). So the cover is simply the
+   first page, and a contents page for a book with one entry isn't in the
+   reading order at all: the nav document only has to be in the manifest. */ ''}<spine toc="ncx">
+<itemref idref="cover"/>
 <itemref idref="titlepage"/>
-${front.length ? spineOf(front) + '\n' : ''}<itemref idref="nav"${entryCount(toc) <= 1 ? ' linear="no"' : ''}/>
-${spineOf(rest)}
+${front.length ? spineOf(front) + '\n' : ''}${navInSpine ? '<itemref idref="nav"/>\n' : ''}${spineOf(rest)}
 </spine>
 <guide>
 <reference type="cover" title="${escXml(t('Cover'))}" href="cover.xhtml"/>
-<reference type="toc" title="${escXml(t('Table of Contents'))}" href="nav.xhtml"/>
-<reference type="text" title="${escXml(t('Beginning'))}" href="ch${start.num}.xhtml"/>
+${navInSpine ? `<reference type="toc" title="${escXml(t('Table of Contents'))}" href="nav.xhtml"/>\n` : ''}<reference type="text" title="${escXml(t('Beginning'))}" href="ch${start.num}.xhtml"/>
 </guide>
 </package>` },
     { path: 'OEBPS/nav.xhtml', content: `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
-<head><title>${escXml(t('Table of Contents'))}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body><nav epub:type="toc" id="toc"><h1>${escXml(t('Contents'))}</h1>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}" lang="${lang}">
+<head><title>${escXml(t('Table of Contents'))}</title>${EPUB_CSS_LINKS}</head>
+<body epub:type="frontmatter"><nav epub:type="toc" role="doc-toc" id="toc"><h1>${escXml(t('Contents'))}</h1>
 <ol>
 <li><a href="title.xhtml">${escXml(t('Title Page'))}</a></li>
 ${navList(toc)}
 </ol></nav>
 <nav epub:type="landmarks" hidden=""><ol>
 <li><a epub:type="cover" href="cover.xhtml">${escXml(t('Cover'))}</a></li>
-<li><a epub:type="toc" href="nav.xhtml">${escXml(t('Table of Contents'))}</a></li>
-<li><a epub:type="bodymatter" href="ch${start.num}.xhtml">${escXml(t('Beginning'))}</a></li>
+${navInSpine ? `<li><a epub:type="toc" href="nav.xhtml">${escXml(t('Table of Contents'))}</a></li>\n` : ''}<li><a epub:type="bodymatter" href="ch${start.num}.xhtml">${escXml(t('Beginning'))}</a></li>
 </ol></nav>
 </body></html>` },
     { path: 'OEBPS/toc.ncx', content: `<?xml version="1.0" encoding="utf-8"?>
@@ -17420,59 +17541,19 @@ ${navList(toc)}
 <navMap>
 <navPoint id="titlepage" playOrder="1"><navLabel><text>${escXml(t('Title Page'))}</text></navLabel><content src="title.xhtml"/></navPoint>${ncxPoints(toc)}
 </navMap></ncx>` },
-    { path: 'OEBPS/style.css', content: `body { font-family: serif; line-height: 1.5; margin: 1em; }
-sup.fnref { font-size: 0.7em; line-height: 0; vertical-align: super; }
-sup.fnref a, .footnote a { text-decoration: none; }
-.notes { margin-top: 2.5em; border-top: 1px solid #999; padding-top: 0.5em; font-size: 0.85em; }
-.notes p { text-indent: 0; text-align: left; margin: 0 0 0.4em; }
-h1 { text-align: center; font-weight: normal; letter-spacing: 0.2em; text-transform: uppercase; font-size: 1.2em; margin: 3em 0 2em; }
-p { text-indent: 1.2em; margin: 0; text-align: justify; -webkit-hyphens: auto; -epub-hyphens: auto; hyphens: auto; widows: 2; orphans: 2; }
-h1, p.brk { -webkit-hyphens: none; -epub-hyphens: none; hyphens: none; }
-p.poetry, .dedication p, .epigraph p, .part p, .copyright p { text-align: left; -webkit-hyphens: manual; -epub-hyphens: manual; hyphens: manual; }
-p.first, p.brk + p, p.byline + p { text-indent: 0; }
-p.first.dialogue:not(.center):not(.right) { text-indent: 1.2em; }
-p.center { text-align: center; text-indent: 0; }
-p.right { text-align: right; text-indent: 0; }
-p.brk { text-align: center; text-indent: 0; margin: 2.5em 0; letter-spacing: 0.5em; }
-p.poetry { text-indent: 0; margin: 0 2em; }
-p.flush { text-indent: 0 !important; }
-p:not(.poetry) + p.poetry, h1 + p.poetry { margin-top: 0.9em; }
-p.poetry + p:not(.poetry) { margin-top: 0.9em; }
-p.byline { text-align: center; text-indent: 0; letter-spacing: 0.2em; text-transform: uppercase; font-size: 0.8em; margin: -1em 0 2em; }
-.copyright { margin-top: 40%; font-size: 0.8em; line-height: 1.5; }
-.copyright p { text-indent: 0; margin: 0 0 0.9em; }
-.dedication, .epigraph, .part, .opener { text-align: center; margin-top: 30%; }
-.epigraph { margin-left: 2em; margin-right: 2em; }
-.dedication p, .epigraph p, .part p { text-indent: 0; margin: 0 0 0.5em; font-style: italic; }
-.dedication em, .epigraph em, .part p em { font-style: normal; }
-.dedication p.poetry, .epigraph p.poetry, .part p.poetry { margin: 0 0 0.2em; }
-p.attr { font-style: normal; font-size: 0.85em; letter-spacing: 0.05em; margin-top: 1em; }
-.part h1 { margin: 0 0 2em; }
-.part .pl { display: block; }
-.part .pt { display: block; margin-top: 0.8em; font-size: 1.6em; letter-spacing: 0; text-transform: none; }
-.opener h1 { margin: 0; font-size: 1.8em; letter-spacing: 0.02em; text-transform: none; }
-.opener .sub { text-align: center; text-indent: 0; margin-top: 0.6em; font-style: italic; }
-.opener .byline { margin: 3em 0 0; }
-nav#toc ol { list-style: none; padding-left: 0; }
-nav#toc ol ol { padding-left: 1.5em; }
-.titlepage { text-align: center; margin-top: 30%; }
-.titlepage h2 { font-size: 2em; margin: 0; }
-.titlepage .sub { text-align: center; text-indent: 0; font-style: italic; }
-.titlepage .auth { text-align: center; text-indent: 0; margin-top: 4em; letter-spacing: 0.3em; text-transform: uppercase; }
-.coverimg { text-align: center; margin: 0; padding: 0; }
-.coverimg img { max-width: 100%; max-height: 100%; }` },
+    ...(await epubStyles()).map((css, i) => ({ path: 'OEBPS/' + EPUB_STYLESHEETS[i], content: css })),
     { path: 'OEBPS/cover.xhtml', content: `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>${escXml(t('Cover'))}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body><div class="coverimg"><img src="${coverName}" alt="${escXml(d.title)}"/></div></body></html>` },
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}" lang="${lang}">
+<head><title>${escXml(t('Cover'))}</title>${EPUB_CSS_LINKS}</head>
+<body><div class="coverimg" epub:type="cover"><img class="portrait" role="doc-cover" src="${coverName}" alt="${escXml(d.author ? t('{title}, by {author}', { title: d.title, author: d.author }) : d.title)}"/></div></body></html>` },
     { path: 'OEBPS/title.xhtml', content: `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>${escXml(d.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
-<body><div class="titlepage"><h2>${escXml(d.title)}</h2>
-${d.subtitle ? `<p class="sub">${escXml(d.subtitle)}</p>` : ''}
-<p class="auth">${escXml(d.author)}</p></div></body></html>` },
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}" lang="${lang}">
+<head><title>${escXml(d.title)}</title>${EPUB_CSS_LINKS}</head>
+<body epub:type="frontmatter"><section epub:type="titlepage" class="titlepage" aria-labelledby="title"><h1 id="title">${escXml(d.title)}</h1>
+${d.subtitle ? `<p class="sub" epub:type="subtitle" role="doc-subtitle">${escXml(d.subtitle)}</p>` : ''}
+<p class="auth">${escXml(d.author)}</p></section></body></html>` },
     { path: 'OEBPS/' + coverName, content: coverContent, base64: true }
   ];
   for (const ch of chapters) {

@@ -1,0 +1,258 @@
+/* How a NEO book looks in an EPUB, on top of Blitz lite (epub/blitz/,
+   blitz-lite.css, linked before this file on every page, so these rules
+   win). Blitz resets the margins, sizes and styles reading apps disagree
+   on, and leaves the page margins, the typeface and the line spacing to
+   the reader. These rules set the rest: NEO's headings, its prose, and
+   the pages that aren't chapters.
+
+   Three rules hold for every line below, each with a test that fails if
+   it's broken (scripts/epub.test.js says why): no CSS value functions or
+   custom properties (Adobe's engine drops the whole sheet over one); no
+   max-width or max-height, no sibling selectors (+, ~), no structural
+   pseudo-classes (:first-child …) and no ::before / ::after (Kindle ignores
+   them); and margins and padding written out side by side, never as the
+   shorthand (old Nooks ignore margin: and padding:). Left and right
+   margins are in %, as Kindle asks, so they don't widen with the type.
+
+   Kept to CSS 2.1 selectors and properties, plus the -webkit- and -epub-
+   forms older engines need (Adobe RMSDK, Kindle KF8, Kobo, Apple Books).
+   No :is(), :not() with lists, custom properties or flexbox. The same
+   rules as NEO's PDF where the two meet: centred pages are centred, prose
+   is justified and indented, a scene break is a centred row of stars.
+
+   The reading-app fixes used below, each said once here; the comment over
+   a rule names the ones it carries.
+
+   [margins written out] margin-top, -right, -bottom, -left, never margin:.
+     Why: older Barnes & Noble Nooks (reported for the Nook Simple Touch;
+     no B&N document says which models) ignore the margin: shorthand, and
+     by some accounts padding:. Without it: on those Nooks the whole
+     declaration is dropped, so headings, scene breaks, poetry and the
+     title page lose their spacing and fall back to the reader's defaults.
+     Everywhere else the long form means exactly the same.
+
+   [% side margins] left and right margins in %, not em.
+     Why: Kindle's publishing guidelines ask for it. An em inset grows
+     with the reader's type size; at the largest sizes on a phone or a
+     small e-ink Kindle, an inset poem or epigraph is squeezed into a few
+     words a line. A % inset stays a share of the screen.
+
+   [start, with left first] text-align: left; text-align: start;
+     Why: start is the side a line begins on, the right in Arabic or
+     Hebrew. Apps that don't know start (Adobe RMSDK: Adobe Digital
+     Editions, older Nooks, Kobo's plain-EPUB engine) drop
+     that one declaration and keep left. Without the left: those apps
+     would fall back to the inherited alignment, justified prose. Without
+     the start: a right-to-left book would line up on the wrong side in
+     Apple Books, Thorium and other current apps.
+
+   [hyphenation, every engine's name] adobe-hyphenate for Adobe RMSDK;
+     -webkit-hyphens for Apple Books, Kobo's kepub engine and other WebKit
+     apps; -epub-hyphens for apps built on EPUB 3.0; hyphens for the rest.
+     Why: each engine reads only its own name and skips the others one
+     declaration at a time, never the whole sheet. Without one: that
+     engine doesn't hyphenate (justified lines open wide gaps), or, where
+     it should stop (poetry, title pages), hyphenates anyway.
+
+   [class, not sibling selector] the export writes a class (.first,
+     .stanza, .after-verse) where h1 + p or :first-child would have found
+     the element. Why: Kindle (KF8 devices and apps) ignores sibling
+     combinators, structural pseudo-classes and ::before / ::after; the
+     rule just does nothing there, silently.
+
+   Left to Blitz, so not repeated here: display: block for figure, nav,
+   section and the other HTML5 blocks (for older apps that don't know
+   them), and page-break-after: avoid beside break-after: avoid on
+   headings (old and new name, so a heading isn't left alone at the
+   bottom of a page). */
+
+body { font-family: serif; }
+
+/* Text set flush to one side is written text-align: left; text-align: start;
+   start is the side a line begins on: the left in English, the right in
+   Arabic or Hebrew, so a book in a right-to-left language would line up on
+   the right side without another rule. Older reading apps that don't know
+   start ignore that one declaration and keep left, which is the same thing
+   for every language NEO writes books in today. (Blitz's own headings are
+   left; NEO centres its headings over it.) */
+
+/* ---- prose ---- */
+/* Blitz sets p { text-indent: 1em }; NEO's indent is a little wider, like
+   its PDF. Justified and hyphenated by the reader's own dictionary, in the
+   book's language (every page has lang): no fewer than three letters left
+   on a line or carried to the next, and not in words under six.
+   -epub-hyphens is EPUB 3.0's own prefix for hyphens. Most reading apps
+   ignore it now (W3C epub-tests, css-epub-hyphens: Thorium, Kobo, Google
+   Play Books and most VitalSource apps don't apply it), and EPUBCheck
+   calls it outdated; it stays beside hyphens and -webkit-hyphens for the
+   older apps that read only it. It's ignored one declaration at a time,
+   never the whole sheet.
+   Fixes: [hyphenation, every engine's name]. The indent is in em so it
+   grows with the reader's type size, on every app; in px it would shrink
+   to a sliver when the reader enlarges the text. The limits come in two
+   names too: -webkit-hyphenate-limit-* for Apple Books and other WebKit
+   apps, hyphenate-limit-chars for newer engines; without them, apps break
+   words into two-letter scraps. */
+p {
+  text-indent: 1.2em;
+  text-align: justify;
+  adobe-hyphenate: auto;
+  -webkit-hyphens: auto; -epub-hyphens: auto;
+
+  hyphens: auto;
+  -webkit-hyphenate-limit-before: 3;
+  -webkit-hyphenate-limit-after: 3;
+  hyphenate-limit-chars: 6 3 3;
+}
+/* (the export marks the paragraph after a heading, a byline or a scene
+   break as .first, so no sibling selector is needed)
+   Fix: [class, not sibling selector]. Written as h1 + p, a Kindle would
+   indent the first line of every chapter and of the text after every
+   scene break. */
+p.first { text-indent: 0; }
+/* a chapter that opens on speech keeps the indent, in line with the replies */
+p.first.dialogue { text-indent: 1.2em; }
+p.first.dialogue.center, p.first.dialogue.right { text-indent: 0; }
+p.center { text-align: center; text-indent: 0; }
+p.right { text-align: right; text-indent: 0; }
+p.flush { text-indent: 0 !important; }
+/* Fixes: [margins written out] (on an old Nook the poem would lose its
+   inset and run as prose), [% side margins] (the inset stays a share of
+   the screen at large type on phones and Kindles), [start, with left
+   first] (lines start on the right in a right-to-left book), and
+   [hyphenation, every engine's name] set to manual, so no engine breaks
+   a line of verse the poet didn't. */
+p.poetry { text-indent: 0; margin-top: 0; margin-right: 5%; margin-bottom: 0; margin-left: 5%; text-align: left; text-align: start; adobe-hyphenate: none; -webkit-hyphens: manual; -epub-hyphens: manual; hyphens: manual; }
+p.poetry.center { text-align: center; }
+p.poetry.right { text-align: right; }
+/* a stanza stands off from the prose around it: the export marks its first
+   line .stanza and the line after it .after-verse
+   Fix: [class, not sibling selector]. Written as p:not(.poetry) + p.poetry,
+   stanzas would run together with the prose on a Kindle. */
+p.poetry.stanza, p.after-verse { margin-top: 0.9em; }
+
+/* a scene break: three stars, centred, never split or hyphenated
+   Fixes: [margins written out] (on an old Nook the stars would sit tight
+   against the text, so the break barely shows), [hyphenation, every
+   engine's name] set to none. Kept on one page in both names:
+   page-break-inside is the older one (Adobe RMSDK, Kindle KF8, older
+   Kobos), break-inside the current one (Apple Books, Thorium, Chromium
+   based apps); with only one, the other engines may split the break and
+   its spacing over a page turn. */
+p.brk { text-align: center; text-indent: 0; margin-top: 2.5em; margin-right: 0; margin-bottom: 2.5em; margin-left: 0; letter-spacing: 0.5em; adobe-hyphenate: none; -webkit-hyphens: none; -epub-hyphens: none; hyphens: none; page-break-inside: avoid; break-inside: avoid; }
+
+/* the writer's name under a chapter's heading, in a book of books
+   Fix: [margins written out]: on an old Nook the name would lose its pull
+   up under the heading and the space after it. */
+p.byline { text-align: center; text-indent: 0; letter-spacing: 0.2em; text-transform: uppercase; font-size: 0.8em; margin-top: -1em; margin-right: 0; margin-bottom: 2em; margin-left: 0; }
+
+/* ---- headings ----
+   A chapter's heading, at whatever depth (an <h2> in a part, or in one book
+   of a shelf): centred, in spaced capitals. Blitz has already turned off
+   hyphenation in headings and kept them with what follows. The line height
+   is the book's, as before Blitz; Blitz's tighter one suits larger type.
+   Fix: [margins written out]: on an old Nook every chapter heading would
+   lose the space above and below it. */
+h1, h2, h3, h4 {
+  text-align: center;
+  font-size: 1.2em;
+  font-weight: normal;
+  line-height: 1.5;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-top: 3em; margin-right: 0; margin-bottom: 2em; margin-left: 0;
+}
+
+/* ---- footnotes ----
+   The number in the text is a link: underlined by Blitz, so it's told
+   apart without colour, but not bold. Blitz's sup keeps the line spacing. */
+sup.fnref a, .footnote a { font-weight: normal; }
+/* A note number is a small target: 6 × 14 px at 16px type, measured. The
+   padding makes it 13 × 22 to tap (WCAG 2.5.8's 24 × 24 exempts links in a
+   sentence, but a finger doesn't); the negative side margins give the
+   width back, and an inline box's vertical padding never moves the line,
+   so not a letter of the text shifts (measured too).
+   Why: on every touch reader (phones and tablets in Apple Books, Google
+   Play Books, Kindle and Kobo apps; touch e-ink Kindles and Kobos) a tap
+   that misses the number turns the page instead of opening the note.
+   (A wider mark like [*] would do the same, but changes the text.)
+   Padding and margins written out: [margins written out]; an old Nook
+   would otherwise drop the larger target. */
+sup.fnref a { padding-top: 0.35em; padding-bottom: 0.35em; padding-left: 0.3em; padding-right: 0.3em; margin-left: -0.3em; margin-right: -0.3em; }
+/* the rule above the notes is the text's own colour (currentColor), so it
+   follows a reader's night and sepia modes
+   Why: Apple Books, Kobo, Google Play Books and Kindle recolour the text
+   for night and sepia. A fixed colour (black) would vanish on a black
+   night page or stand out on sepia. The border is written out
+   (width, style, colour) only to keep one habit; no app is reported to
+   mishandle the border shorthand. */
+.notes { margin-top: 2.5em; border-top-width: 1px; border-top-style: solid; border-top-color: currentColor; padding-top: 0.5em; font-size: 0.85em; }
+/* Fixes: [start, with left first] (notes start on the right in a
+   right-to-left book), [margins written out] (on an old Nook the notes
+   would lose the space between them). */
+.notes p, .notes .footnote { text-indent: 0; text-align: left; text-align: start; margin-top: 0; margin-right: 0; margin-bottom: 0.4em; margin-left: 0; font-size: 1em; line-height: 1.5; }
+
+/* ---- pages that aren't chapters ---- */
+/* centred, like the PDF: the page and every line on it (#462: a <p> sets
+   its own alignment, so centring the section alone isn't enough) */
+.dedication, .epigraph, .part, .opener, .titlepage { text-align: center; margin-top: 30%; }
+/* Fix: [hyphenation, every engine's name] set to manual: centred lines
+   on these pages are short, and an engine left to hyphenate would break
+   a title or a dedication's name mid-word. */
+.dedication p, .epigraph p, .part p, .opener p, .titlepage p { text-align: center; text-indent: 0; adobe-hyphenate: none; -webkit-hyphens: manual; -epub-hyphens: manual; hyphens: manual; }
+/* Fix: [% side margins]: an em inset would leave an epigraph a few words
+   a line at large type on a phone or a small Kindle. */
+.epigraph { margin-left: 8%; margin-right: 8%; }
+/* Fix: [margins written out]: on an old Nook these lines would take the
+   reader's paragraph spacing instead. */
+.dedication p, .epigraph p, .part p { margin-top: 0; margin-right: 0; margin-bottom: 0.5em; margin-left: 0; font-style: italic; }
+.dedication em, .epigraph em, .part p em { font-style: normal; }
+/* Fix: [margins written out], as above: on an old Nook this rule would
+   be dropped, and p.poetry's 5% side inset would push a poem on these
+   centred pages off centre. */
+.dedication p.poetry, .epigraph p.poetry, .part p.poetry { margin-top: 0; margin-right: 0; margin-bottom: 0.2em; margin-left: 0; }
+p.attr { font-style: normal; font-size: 0.85em; letter-spacing: 0.05em; margin-top: 1em; }
+
+.copyright { margin-top: 40%; font-size: 0.8em; line-height: 1.5; }
+/* Fixes: [start, with left first] (flush to the start side, right in a
+   right-to-left book), [margins written out] (on an old Nook the
+   copyright lines would lose their spacing), [hyphenation, every
+   engine's name] set to manual (no broken ISBNs or names). */
+.copyright p { text-indent: 0; text-align: left; text-align: start; margin-top: 0; margin-right: 0; margin-bottom: 0.9em; margin-left: 0; adobe-hyphenate: none; -webkit-hyphens: manual; -epub-hyphens: manual; hyphens: manual; }
+
+/* a part's page: "Part One", then its title, larger and as written
+   Fix: [margins written out]: on an old Nook the heading would keep the
+   3em space above it from h1, h2 and sit lower than on other readers. */
+.part h1, .part h2 { margin-top: 0; margin-right: 0; margin-bottom: 2em; margin-left: 0; }
+.part .pl { display: block; }
+.part .pt { display: block; margin-top: 0.8em; font-size: 1.6em; letter-spacing: 0; text-transform: none; }
+
+/* a book's own first page, in a shelf exported as one book
+   Fix: [margins written out], for the heading and the byline: on an old
+   Nook both would keep the spacing from the general rules above. */
+.opener h1, .opener h2, .opener h3 { margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; font-size: 1.8em; letter-spacing: 0.02em; text-transform: none; }
+.opener .sub { margin-top: 0.6em; font-style: italic; }
+.opener .byline { margin-top: 3em; margin-right: 0; margin-bottom: 0; margin-left: 0; }
+
+/* the title page
+   Fix: [margins written out]: on an old Nook the title would keep the
+   chapter heading's 3em space above it and sit low on the page. */
+.titlepage h1 { font-size: 2em; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; font-weight: bold; letter-spacing: normal; text-transform: none; }
+.titlepage .sub { font-style: italic; }
+.titlepage .auth { margin-top: 4em; letter-spacing: 0.3em; text-transform: uppercase; }
+
+/* ---- contents ----
+   Blitz underlines and bolds every link; in the list of chapters, plain */
+nav#toc ol { padding-left: 0; }
+nav#toc ol ol { padding-left: 1.5em; }
+nav#toc a { font-weight: normal; text-decoration: none; }
+
+/* ---- the cover: the image, whole, on its own page ----
+   Blitz's img.portrait fits it to the screen's height, its shape kept
+   (object-fit: contain); a percentage alone would let it run off the page
+   Why the image sits in a centred div, not centred itself: some Apple
+   Books (iBooks) versions can't centre an image directly, only the block
+   around it; without the div the cover sits to the left there. Margins
+   and padding written out: [margins written out]; an old Nook would
+   otherwise keep the reader's margins round the cover. */
+.coverimg { text-align: center; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0; }

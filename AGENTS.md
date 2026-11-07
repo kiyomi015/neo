@@ -33,6 +33,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding a feature. The product is 
 | `locales/<code>.json` | One language. Regional files (`fr-CA.json`) hold only the strings that differ |
 | `pocket/` | Capacitor shell. It does not contain its own editor |
 | `print/` | Vendored Paged.js and hyphenation patterns for paperback PDFs |
+| `epub/` | The EPUB's stylesheet: vendored Blitz lite (`epub/blitz/`, MIT, never edited) and NEO's own rules (`epub/neo.css`) |
 
 `app.js` section banners look like `/*  SAVING  */`. Start there: bookshelf, bound shelves, editor open, typing, poetry, screenplays, placeholders, nav, tabs, outline, outline cards, darlings, counters, saving, refresh, structural undo, find, import, spellcheck, focus, goals, export, manuscript format.
 
@@ -83,6 +84,17 @@ A book whose `book.json` says `"format": "screenplay"` is a script. Right-click 
 - A script's style lives in its `book.json`: `underlineHeadings: true` (Format → Underline Scene Headings) and `contd: false` ((CONT'D) turned off).
 - A script exports as a PDF (letter, printed with `print: 'screenplay'`), Fountain or Final Draft (`.fdx`). The book formats don't apply.
 - A `.fountain` or `.fdx` file dropped on a shelf or picked with Import becomes a new script. `importFile` in `main.js` only reads the file; `spFromFountain` and `spFromFdx` in `app.js` sort it into elements. Both readers are plain string functions, so the tests cover them (`scripts/fixtures/` holds a Final Draft file written by screenplain, an outside tool).
+
+## EPUB
+
+Export → EPUB is `buildEpubEntries` and `chapterXhtml` in `app.js` (EPUB 3, with a nav page and an NCX for older readers).
+
+- The book carries two stylesheets, `blitz-lite.css` and `neo.css`, copied as they are from `epub/blitz/` and `epub/` (read with `fetch` at export, `epubStyles`) and linked from every page in that order (`EPUB_STYLESHEETS`), so NEO's rules win; `scripts/pocket-www.js` copies `epub/` into Pocket. Change how the EPUB looks in `neo.css`, never in Blitz. Its rules, each guarded by a commented test in `scripts/epub.test.js`: no CSS value functions or custom properties (Adobe's engine, in ADE and Kobo, drops the whole sheet over one); no `max-width`/`max-height`, sibling selectors (`+`, `~`), structural pseudo-classes or `::before`/`::after` (Kindle ignores them; style by a class the export sets, like `.first`, `.stanza`, `.after-verse`); margins, padding and borders written side by side, never the shorthand (old Nooks ignore it); left and right margins in `%`; no `rem`, no `vh`/`vw` outside `@supports`. A `<p>` sets its own alignment, so a centred page centres its `p`s too (#462).
+- Every page's `<body>` says where it is in the book (`epubMatter`): `frontmatter` (copyright, dedication, epigraph, the title page, the contents), `bodymatter` (the story, parts, prologue and epilogue included), `backmatter` (acknowledgments, about). No page is `linear="no"` (readers place those as they like): the cover is the first page, and a contents page with one entry isn't in the spine, nor are its landmark and guide entry.
+- What each section is comes from one table, `EPUB_SEMANTICS`: its `epub:type` (EPUB 3 Structural Semantics) and its DPUB-ARIA `role`, which goes on the `<section>`, never on `<body>`. A kind with no DPUB-ARIA role (copyright, a bound shelf's opener, About the Author) keeps its `epub:type` only. Every section is named: `aria-labelledby` its heading (`id="h…"`), or `aria-label` with the kind's name. A heading's rank is its depth in the contents (`ch.level`): a chapter in a part, or in one book of a shelf, is an `<h2>`. Subtitles are `doc-subtitle`.
+- Footnotes are `doc-noteref` / `doc-footnote` / `doc-backlink`; a scene break is `<p class="brk" role="separator">`, so a screen reader doesn't read the stars. Every page, and `content.opf`'s `<package>`, carries the book's language.
+- `content.opf` has the schema.org accessibility metadata (`epubA11yMeta`), and the title, any subtitle (each with its `title-type`), the author with the role `aut` (MARC relators) and `dc:rights`, the first line of the book's own copyright page (`epubTitleMeta`). A book without a copyright page claims no rights. No `dcterms:conformsTo`: that's a claim to meet EPUB Accessibility, Hugh's to make. EPUBCheck allows no `aria-*` on the nav page's `<nav>`.
+- `scripts/epub.test.js` (the table, the metadata, matter, heading rank, the CSS rules, language tags, escaping); `npm run test:epub` (`scripts/epub.e2e.js`, 22 checks on 10 books: every kind of section, a shelf as one book, a bound shelf with a part (`<h3>`), one chapter, footnotes on front pages, a placed contents page, parts with no title, pt-BR and en-GB, pasted markup, an empty book, nothing from outside the book, XML well-formedness). EPUBCheck and DAISY Ace are run by hand on the books it leaves in the temp folder.
 
 ## Manuscript format
 
