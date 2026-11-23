@@ -2815,8 +2815,9 @@ async function dictionariesFromFile(file) {
   return [{ ...dictionary, name: dictionaryName, deltasBeside: beside.filter((entry) => !dictionary.deltasNotUtf8.includes(entry)) }];
 }
 
-// Spellcheck Language → Add a Dictionary…: copied in, loaded to be sure
-// Hunspell can read it, then chosen. One that won't load is taken out again.
+// Options → Add a Dictionary…: copied in and loaded to be sure Hunspell can
+// read it. One that won't load is taken out again. Answers the language
+// added, for the window to choose, or nothing.
 async function addDictionary() {
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
   // what to download and pick, every time: the file picker alone can't say
@@ -2854,9 +2855,6 @@ async function addDictionary() {
     fail(t('Hunspell, the spellchecker, couldn\'t read it.'));
     return;
   }
-  // the window records the choice with the library, as from the menu
-  sendToWindow({ type: 'spellLanguage', value: added[0].code });
-  try { buildMenu(); } catch (err) { logError('menu', err); }
   // a .dic_delta left out: not UTF-8, or beside it but matching no dictionary
   const joined = found.flatMap((dictionary) => dictionary.deltasBeside);
   const notUtf8 = found.flatMap((dictionary) => dictionary.deltasNotUtf8);
@@ -2866,6 +2864,7 @@ async function addDictionary() {
     notes.push(t('{file} wasn’t used. A .dic_delta joins a dictionary when it’s named like it: {name}.', { file: unmatched, name: added[0].name + '.dic_delta' }));
   }
   if (notes.length) dialog.showMessageBox(win, { type: 'info', message: notes.join('\n'), buttons: [t('OK')] }).catch(() => {});
+  return added[0].code;
 }
 
 // The dictionary work runs in a helper process (spell-worker.js), so the
@@ -2962,6 +2961,12 @@ ipcMain.handle('spell:setLanguage', async (_e, code) => {
   return ok;
 });
 
+// the dictionaries the writer added, for Options' list, by their own names
+ipcMain.handle('spell:addedLanguages', () => Object.keys(addedDictionaries())
+  .filter((code) => !SPELL_LANGUAGES[code])
+  .map((code) => ({ code, label: languageLabel(code) })));
+ipcMain.handle('spell:addDictionary', () => addDictionary().catch((err) => { logError('dictionary', err); return null; }));
+ipcMain.handle('spell:showAddedDictionaries', () => require('electron').shell.openPath(addedDictionariesDir()));
 ipcMain.handle('spell:check', async (_e, words) => {
   const res = await spellRequest({ type: 'check', words });
   if (res.ok) return res.result;

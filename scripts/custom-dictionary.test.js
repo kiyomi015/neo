@@ -20,6 +20,7 @@ const JSZip = localRequire('jszip');
 function loadMain({ spellProcess } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'neo-dictionary-'));
   const userData = path.join(base, 'userData');
+  const handlers = {};
   fs.mkdirSync(userData);
   const electron = {
     app: {
@@ -30,7 +31,7 @@ function loadMain({ spellProcess } = {}) {
       whenReady: () => ({ then() {} }),
       on() {}
     },
-    ipcMain: { on() {}, handle() {} },
+    ipcMain: { on() {}, handle: (name, handler) => { handlers[name] = handler; } },
     BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },
     Menu: { buildFromTemplate: (items) => items, setApplicationMenu() {} },
     dialog: {},
@@ -47,7 +48,7 @@ function loadMain({ spellProcess } = {}) {
     Buffer
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), context, { filename: path.join(root, 'main.js') });
-  return { base, userData, run: (code) => vm.runInContext(code, context), context };
+  return { base, userData, handlers, run: (code) => vm.runInContext(code, context), context };
 }
 
 // A small Italian dictionary in ISO-8859-15, as many LibreOffice ones are
@@ -207,6 +208,8 @@ describe('dictionaries the writer adds', () => {
     assert.equal(neo.run('spellDir("xx")'), null);
     assert.equal(neo.run('languageLabel("it-IT")'), 'Italiano (Italia)');
     assert.equal(neo.run('languageLabel("es")'), 'Español');
+    // Options lists the added ones NEO doesn't ship, by their own names
+    assert.deepEqual(JSON.parse(JSON.stringify(neo.handlers['spell:addedLanguages']())), [{ code: 'it-IT', label: 'Italiano (Italia)' }]);
   });
 
   test('Add a Dictionary… says what to pick before the file picker opens', async () => {
@@ -300,7 +303,7 @@ describe('dictionaries the writer adds', () => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [picks.shift()] });`);
     const add = async (files) => {
       neo.context.picks.push(path.join(folderWith(files), 'en_US.dic'));
-      await neo.run('addDictionary()');
+      assert.equal(await neo.run('addDictionary()'), 'en-US'); // for Options to choose
       return { ...(await neo.run('spellRequest({ type: "check", words: ["NEOword", "otherword", "walked"] })')).result };
     };
     const added = path.join(neo.userData, 'dictionaries', 'en-US');

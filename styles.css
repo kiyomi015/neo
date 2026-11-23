@@ -606,6 +606,7 @@ body.night .ps-paper .ps-body.empty::before, body.night .ps-paper .tp-field:empt
 .options-modal .btn-link { background: none; border: 0; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; padding: 2px 4px; }
 .options-modal .opt-foot { text-align: right; padding-top: 12px; }
 body.light .options-modal select, body.light .options-modal .opt-steps button:not(.btn-link) { border-color: #cfc9bd; }
+.options-modal .opt-steps button.opt-button { width: auto; padding: 0 10px; font-size: 13px; }
 
 /* File → Export → Paperback for KDP… */
 .print-modal { max-height: calc(100vh - 48px); overflow-y: auto; }
